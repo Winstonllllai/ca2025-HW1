@@ -19,15 +19,13 @@ main:
     jal ra, test     # a0 = test()
     lw ra, 0(sp)     # Restore return address
     addi sp, sp, 4   # Deallocate stack space
-    beq a0, zero, main.test_failed  # if (a0 == 0) goto fail
+    beq a0, zero, main.end  # if (a0 == 0) goto main.end
     la a0, str5  # Load address of str5
     li a7, 4  # syscall: print string
     ecall
-    li a0, 0  # return 0
-    ret
-main.test_failed:
-    li a0, 1  # return 1
-    ret
+main.end:
+    li a7, 10  # exit code = 10
+    ecall
 
 # ======================================
 # Function: clz
@@ -48,6 +46,23 @@ clz.skip:
     sub a0, t0, a0    # return n - x
     ret    # End of clz function
     
+# ======================================
+# Function: uf8_decode
+# ======================================
+uf8_decode:
+    # Input: a0 = 8-bit unsigned integer
+    # Output: a0 = 32-bit unsigned integer
+    andi t0, a0, 0x0f  # mantissa = t0 = fl & 0x0f
+    srli t1, a0, 4     # exponent = t1 = fl >> 4
+    li t2, 0x7fff   # offset = t2 = 0x7fff
+    li t3, 15      # t3 dummy = 15
+    sub t3, t3, t1  # t3 = 15 - exponent
+    srl t2, t2, t3  # offset >>= (15 - exponent)
+    slli t2, t2, 4  # offset <<= 4
+    sll t0, t0, t1  # mantissa <<= exponent
+    add a0, t0, t2  # return mantissa + offset
+    ret # End of uf8_decode function
+
 # ======================================
 # Function: uf8_encode
 # ======================================
@@ -72,8 +87,9 @@ uf8_encode:
     blt t2, t0, uf8_encode.loop3    # if (msb < 5) goto loop
     addi t3, t2, -4  # exponent = msb - 4
     li t0, 15  # t0 dummy = 15
-    bge t0, t3, uf8_encode.skip1    #if (exponent <= 15) goto skip1
+    bge t0, t3, uf8_encode.skip1    # if (exponent <= 15) goto skip1
     li t3, 15  # exponent = 15
+uf8_encode.skip1:
     li t0, 0  # e = t0 = 0
 uf8_encode.loop1:
     bge t0, t3, uf8_encode.loop2
@@ -82,22 +98,23 @@ uf8_encode.loop1:
     addi t0, t0, 1 # e += 1
     j uf8_encode.loop1
 uf8_encode.loop2:
-    bge zero, t3, uf8_encode.loop3 # if (0 >= exponent) goto loop3
-    bge a0, t4, uf8_encode.loop3  # if (value >= overflow) goto loop3
+    bge zero, t3, uf8_encode.loop2_end # if (0 >= exponent) goto loop2_end
+    bge a0, t4, uf8_encode.loop2_end  # if (value >= overflow) goto loop2_end
     addi t4, t4, -16 # overflow -= 16
     srli t4, t4, 1  # overflow >>= 1
     addi t3, t3, -1  # exponent -= 1
     j uf8_encode.loop2
+uf8_encode.loop2_end:
     li t0, 15 # t0 dummy = 15
 uf8_encode.loop3:
-    bge t3, t0, uf8_encode.skip1  # if (exponent >= 15) goto skip1
+    bge t3, t0, uf8_encode.skip2  # if (exponent >= 15) goto skip1
     slli t2, t4, 1  # next_overflow = overflow << 1
     addi t2, t2, 16 # next_overflow += 16
-    blt a0, t2, uf8_encode.skip1  # if (value < next_overflow) goto skip1
+    blt a0, t2, uf8_encode.skip2  # if (value < next_overflow) goto skip1
     mv t4, t2 # overflow = next_overflow
     addi t3, t3, 1  # exponent += 1
     j uf8_encode.loop3
-uf8_encode.skip1:
+uf8_encode.skip2:
     sub t2, a0, t4  # mantissa = value - overflow
     srl t2, t2, t3 # mantissa >>= exponent
     slli a0, t3,4  # a0 = exponent << 4
@@ -119,16 +136,24 @@ test.loop:
     bge t2, t3, test.end   # if (i >= max) goto end
     mv t4, t2  # fl = t4 = i
     mv a0, t4  # a0 = fl
-    addi sp, sp, -4  # Allocate stack space
+    addi sp, sp, -24  # Allocate stack space
     sw ra, 0(sp)  # Save return address
-    jal ra, uf8_encode  # a0 = uf8_encode(fl)
-    lw ra, 0(sp)  # Restore return address
-    mv t5, a0  # value = t5 = uf8_encode(fl)
-    sw ra, 0(sp)  # Save return address
+    sw t0, 4(sp)  # Save previous_value
+    sw t1, 8(sp)  # Save passed
+    sw t2, 12(sp)  # Save i
+    sw t3, 16(sp)  # Save max
+    sw t4, 20(sp)  # Save fl
+    jal ra, uf8_decode  # a0 = uf8_decode(fl)
+    mv t5, a0  # value = t5 = uf8_decode(fl)
     jal ra, uf8_encode  # a0 = uf8_encode(value)
-    lw ra, 0(sp)  # Restore return address
-    addi sp, sp, 4   # Deallocate stack space
     mv t6, a0  # fl2 = t6 = uf8_encode(value)
+    lw t4, 20(sp)  # Restore fl
+    lw t3, 16(sp)  # Restore max
+    lw t2, 12(sp)  # Restore i
+    lw t1, 8(sp)  # Restore passed
+    lw t0, 4(sp)  # Restore previous_value
+    lw ra, 0(sp)  # Restore return address
+    addi sp, sp, 24   # Deallocate stack space
     beq t4, t6, test.skip1  # if (fl == fl2) goto skip1
     mv a0, t4  # a0 = fl
     li a7, 34  # syscall: print integer
