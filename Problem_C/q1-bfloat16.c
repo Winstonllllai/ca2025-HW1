@@ -6,24 +6,24 @@ typedef struct {
     uint16_t bits;
 } bf16_t;
 
-#define BF16_SIGN_MASK 0x8000U
-#define BF16_EXP_MASK 0x7F80U
-#define BF16_MANT_MASK 0x007FU
-#define BF16_EXP_BIAS 127
+// #define BF16_SIGN_MASK 0x8000U
+// #define BF16_EXP_MASK 0x7F80U
+// #define BF16_MANT_MASK 0x007FU
+// #define BF16_EXP_BIAS 127
 
-#define BF16_NAN() ((bf16_t) {.bits = 0x7FC0})
-#define BF16_ZERO() ((bf16_t) {.bits = 0x0000})
+// #define BF16_NAN() ((bf16_t) {.bits = 0x7FC0})
+// #define BF16_ZERO() ((bf16_t) {.bits = 0x0000})
 
 static inline bool bf16_isnan(bf16_t a)
 {
-    return ((a.bits & BF16_EXP_MASK) == BF16_EXP_MASK) &&
-           (a.bits & BF16_MANT_MASK);
+    return ((a.bits & 0x7F80U) == 0x7F80U) &&
+           (a.bits & 0x007FU);
 }
 
 static inline bool bf16_isinf(bf16_t a)
 {
-    return ((a.bits & BF16_EXP_MASK) == BF16_EXP_MASK) &&
-           !(a.bits & BF16_MANT_MASK);
+    return ((a.bits & 0x7F80U) == 0x7F80U) &&
+           !(a.bits & 0x007FU);
 }
 
 static inline bool bf16_iszero(bf16_t a)
@@ -62,7 +62,7 @@ static inline bf16_t bf16_add(bf16_t a, bf16_t b)
         if (mant_a)
             return a;
         if (exp_b == 0xFF)
-            return (mant_b || sign_a == sign_b) ? b : BF16_NAN();
+            return (mant_b || sign_a == sign_b) ? b : ((bf16_t) {.bits = 0x7FC0});
         return a;
     }
     if (exp_b == 0xFF)
@@ -77,9 +77,7 @@ static inline bf16_t bf16_add(bf16_t a, bf16_t b)
         mant_b |= 0x80;
 
     int16_t exp_diff = exp_a - exp_b;
-    uint16_t result_sign;
     int16_t result_exp;
-    uint32_t result_mant;
 
     if (exp_diff > 0) {
         result_exp = exp_a;
@@ -94,7 +92,8 @@ static inline bf16_t bf16_add(bf16_t a, bf16_t b)
     } else {
         result_exp = exp_a;
     }
-
+    uint32_t result_mant;
+    uint16_t result_sign;
     if (sign_a == sign_b) {
         result_sign = sign_a;
         result_mant = (uint32_t) mant_a + mant_b;
@@ -114,11 +113,11 @@ static inline bf16_t bf16_add(bf16_t a, bf16_t b)
         }
 
         if (!result_mant)
-            return BF16_ZERO();
+            return ((bf16_t) {.bits = 0x0000});
         while (!(result_mant & 0x80)) {
             result_mant <<= 1;
             if (--result_exp <= 0)
-                return BF16_ZERO();
+                return ((bf16_t) {.bits = 0x0000});
         }
     }
 
@@ -130,7 +129,7 @@ static inline bf16_t bf16_add(bf16_t a, bf16_t b)
 
 static inline bf16_t bf16_sub(bf16_t a, bf16_t b)
 {
-    b.bits ^= BF16_SIGN_MASK;
+    b.bits ^= 0x8000U;
     return bf16_add(a, b);
 }
 
@@ -149,14 +148,14 @@ static inline bf16_t bf16_mul(bf16_t a, bf16_t b)
         if (mant_a)
             return a;
         if (!exp_b && !mant_b)
-            return BF16_NAN();
+            return ((bf16_t) {.bits = 0x7FC0});
         return (bf16_t) {.bits = (result_sign << 15) | 0x7F80};
     }
     if (exp_b == 0xFF) {
         if (mant_b)
             return b;
         if (!exp_a && !mant_a)
-            return BF16_NAN();
+            return ((bf16_t) {.bits = 0x7FC0});
         return (bf16_t) {.bits = (result_sign << 15) | 0x7F80};
     }
     if ((!exp_a && !mant_a) || (!exp_b && !mant_b))
@@ -182,7 +181,7 @@ static inline bf16_t bf16_mul(bf16_t a, bf16_t b)
 
     uint32_t result_mant = (uint32_t) mant_a * mant_b;
 
-    int32_t result_exp = (int32_t) exp_a + exp_b - BF16_EXP_BIAS + exp_adjust;
+    int32_t result_exp = (int32_t) exp_a + exp_b - 127 + exp_adjust;
 
     if (result_mant & 0x8000) {
         result_mant = (result_mant >> 8) & 0x7F;
@@ -219,12 +218,12 @@ static inline bf16_t bf16_div(bf16_t a, bf16_t b)
             return b;
         /* Inf/Inf = NaN */
         if (exp_a == 0xFF && !mant_a)
-            return BF16_NAN();
+            return ((bf16_t) {.bits = 0x7FC0});
         return (bf16_t) {.bits = result_sign << 15};
     }
     if (!exp_b && !mant_b) {
         if (!exp_a && !mant_a)
-            return BF16_NAN();
+            return ((bf16_t) {.bits = 0x7FC0});
         return (bf16_t) {.bits = (result_sign << 15) | 0x7F80};
     }
     if (exp_a == 0xFF) {
@@ -252,7 +251,7 @@ static inline bf16_t bf16_div(bf16_t a, bf16_t b)
         }
     }
 
-    int32_t result_exp = (int32_t) exp_a - exp_b + BF16_EXP_BIAS;
+    int32_t result_exp = (int32_t) exp_a - exp_b + 127;
 
     if (!exp_a)
         result_exp--;
@@ -291,25 +290,25 @@ static inline bf16_t bf16_sqrt(bf16_t a)
         if (mant)
             return a; /* NaN propagation */
         if (sign)
-            return BF16_NAN(); /* sqrt(-Inf) = NaN */
+            return ((bf16_t) {.bits = 0x7FC0}); /* sqrt(-Inf) = NaN */
         return a;              /* sqrt(+Inf) = +Inf */
     }
 
     /* sqrt(0) = 0 (handle both +0 and -0) */
     if (!exp && !mant)
-        return BF16_ZERO();
+        return ((bf16_t) {.bits = 0x0000});
 
     /* sqrt of negative number is NaN */
     if (sign)
-        return BF16_NAN();
+        return ((bf16_t) {.bits = 0x7FC0});
 
     /* Flush denormals to zero */
     if (!exp)
-        return BF16_ZERO();
+        return ((bf16_t) {.bits = 0x0000});
 
     /* Direct bit manipulation square root algorithm */
     /* For sqrt: new_exp = (old_exp - bias) / 2 + bias */
-    int32_t e = exp - BF16_EXP_BIAS;
+    int32_t e = exp - 127;
     int32_t new_exp;
     
     /* Get full mantissa with implicit 1 */
@@ -318,9 +317,9 @@ static inline bf16_t bf16_sqrt(bf16_t a)
     /* Adjust for odd exponents: sqrt(2^odd * m) = 2^((odd-1)/2) * sqrt(2*m) */
     if (e & 1) {
         m <<= 1;  /* Double mantissa for odd exponent */
-        new_exp = ((e - 1) >> 1) + BF16_EXP_BIAS;
+        new_exp = ((e - 1) >> 1) + 127;
     } else {
-        new_exp = (e >> 1) + BF16_EXP_BIAS;
+        new_exp = (e >> 1) + 127;
     }
     
     /* Now m is in range [128, 256) or [256, 512) if exponent was odd */
@@ -366,7 +365,7 @@ static inline bf16_t bf16_sqrt(bf16_t a)
     if (new_exp >= 0xFF)
         return (bf16_t) {.bits = 0x7F80};  /* +Inf */
     if (new_exp <= 0)
-        return BF16_ZERO();
+        return ((bf16_t) {.bits = 0x0000});
     
     return (bf16_t) {.bits = ((new_exp & 0xFF) << 7) | new_mant};
 }
@@ -446,7 +445,7 @@ static int test_special_values(void)
     bf16_t neg_inf = {.bits = 0xFF80};  /* -Infinity */
     TEST_ASSERT(bf16_isinf(neg_inf), "Negative infinity not detected");
 
-    bf16_t nan_val = BF16_NAN();
+    bf16_t nan_val = ((bf16_t) {.bits = 0x7FC0});
     TEST_ASSERT(bf16_isnan(nan_val), "NaN not detected");
     TEST_ASSERT(!bf16_isinf(nan_val), "NaN detected as infinity");
 
@@ -525,7 +524,7 @@ static int test_comparisons(void)
     TEST_ASSERT(bf16_gt(b, a), "Greater than test failed");
     TEST_ASSERT(!bf16_gt(a, b), "Not greater than test failed");
 
-    bf16_t nan_val = BF16_NAN();
+    bf16_t nan_val = ((bf16_t) {.bits = 0x7FC0});
     TEST_ASSERT(!bf16_eq(nan_val, nan_val), "NaN equality test failed");
     TEST_ASSERT(!bf16_lt(nan_val, a), "NaN less than test failed");
     TEST_ASSERT(!bf16_gt(nan_val, a), "NaN greater than test failed");
