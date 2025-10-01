@@ -216,3 +216,259 @@ bf16_sub:
     lw ra, 0(sp)        # Restore return address
     addi sp, sp, 4      # Deallocate stack space
     ret
+
+# ===============================
+# Function: bf16_mul(bf16_t a, bf16_t b)
+# ===============================
+bf16_mul:
+    # Input: a0 = a, a1 = b
+    # Output: a0 = result
+    srli t0, a0, 15       # t0 = a >> 15
+    andi t0, t0, 1        # t0 = sign_a
+    srli t1, a1, 15       # t1 = b >> 15
+    andi t1, t1, 1        # t1 = sign_b
+    srli t2, a0, 7        # t2 = a >> 7
+    andi t2, t2, 0xff     # t2 = exp_a
+    srli t3, a1, 7        # t3 = b >> 7
+    andi t3, t3, 0xff     # t3 = exp_b
+    andi t4, a0, 0x7f     # t4 = mant_a
+    andi t5, a1, 0x7f     # t5 = mant_b
+    xor t1, t0, t1        # t1 = result_sign = sign_a ^ sign_b
+    li t6, 0xff           # t6 = dummy = 0xff
+    bne t2, t6, bf16_mul.skip1  # if exp_a != 0xff goto skip1
+    beq t4, zero, bf16_mul.skip1_1  # if mant_a == 0 goto skip1_1
+    ret
+bf16_mul.skip1_1:
+    bne t3, zero, bf16_mul.skip1_2  # if exp_b != 0 goto skip1_2
+    beq t5, zero, bf16_mul.skip1_2  # if mant_b == 0 goto skip1_2
+    li a0, 0x7fc0       # return NaN
+    ret
+bf16_mul.skip1_2:
+    slli a0, t1, 15     # a0 = result_sign << 15
+    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    ret
+bf16_mul.skip1:
+    li t6, 0xff           # t6 = dummy = 0xff
+    bne t3, t6, bf16_mul.skip2  # if exp_b != 0xff goto skip2
+    beq t5, zero, bf16_mul.skip2_1 # if mant_b == 0 goto skip2_1
+    mv a0, a1          # return b
+    ret
+bf16_mul.skip2_1:
+    bne t2, zero, bf16_mul.skip2_2  # if exp_a != 0 goto skip2_2
+    beq t4, zero, bf16_mul.skip2_2  # if mant_a == 0 goto skip2_2
+    li a0, 0x7fc0       # return NaN
+    ret
+bf16_mul.skip2_2:
+    slli a0, t1, 15     # a0 = result_sign << 15
+    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    ret
+bf16_mul.skip2:
+    bne t2, zero, bf16_mul.skip3_1  # if exp_a != 0 goto skip3_1
+    beq t4, zero, bf16_mul.skip3_1  # if mant_a == 0 goto skip3
+    slli a0, t1, 15     # a0 = result_sign << 15
+    ret
+bf16_mul.skip3_1:
+    bne t3, zero, bf16_mul.skip3_2  # if exp_b != 0 goto skip3_2
+    beq t5, zero, bf16_mul.skip3_2  # if mant_b == 0 goto skip3
+    slli a0, t1, 15     # a0 = result_sign << 15
+    ret
+bf16_mul.skip3_2:
+    li a0, 0      # a0 = exp_adjust = 0
+    bne t2, zero, bf16_mul.skip4_2  # if exp_a != 0 goto skip4_2
+bf16_mul.loop1:
+    andi t6, t4, 0x80   # t6 = mant_a & 0x80
+    bne t6, zero, bf16_mul.skip4_1  # if t6 != 0 goto skip4_1
+    slli t4, t4, 1      # mant_a <<= 1
+    addi a0, a0, -1     # exp_adjust -= 1
+    j bf16_mul.loop1
+bf16_mul.skip4_1:
+    li t2, 1         # exp_a = 1
+    j bf16_mul.skip4
+bf16_mul.skip4_2:
+    ori t4, t4, 0x80     # mant_a |= 0x80
+bf16_mul.skip4:
+    bne t3, zero, bf16_mul.skip5_2 # if exp_b != 0 goto skip5_2
+bf16_mul.loop2:
+    andi t6, t5, 0x80   # t6 = mant_b & 0x80
+    bne t6, zero, bf16_mul.skip5_1  # if t6 != 0 goto skip5_1
+    slli t5, t5, 1      # mant_b <<= 1
+    addi a0, a0, -1     # exp_adjust -= 1
+    j bf16_mul.loop2
+bf16_mul.skip5_1:
+    li t3, 1         # exp_b = 1
+    j bf16_mul.skip5
+bf16_mul.skip5_2:
+    ori t5, t5, 0x80     # mant_b |= 0x80
+bf16_mul.skip5:
+
+# result_mant = (uint32_t) mant_a * mant_b
+mv a1, t5       # a1 = result_exp = mant_b
+slli t4, t4, 16  # mant_a <<= 16
+li t6, 0        # t6 = 0
+bf16_mul.mul_loop:
+    li t0, 16       # t0 = dummy = 16
+    bge t6, t0, bf16_mul.mul_end  # if t6 >= 16 goto mul_end
+    andi t0, a1, 1    # t0 = dummy = result_mant & 1
+    beq t0, zero, bf16_mul.skip_add
+    add a1, a1, t4   # result_mant += mant_a
+bf16_mul.skip_add:
+    srli a1, a1, 1    # result_mant >>= 1
+    addi t6, t6, 1    # i++
+    j bf16_mul.mul_loop
+bf16_mul.mul_end:
+    srli t4, t4, 16   # mant_a >>= 16
+    # end result_mant = (uint32_t) mant_a * mant_b
+
+    add a0, a0, t2     # result_exp = exp_adjust + exp_a
+    add a0, a0, t3     # result_exp = exp_adjust + exp
+    addi a0, a0, -127  # result_exp -= 127
+    andi t6, a1, 0x8000  # t6 = result_mant & 0x8000
+    beq t6, zero, bf16_mul.skip6_1  # if t6 == 0 goto skip6_1
+    srli a1, a1, 8      # result_mant >>= 8
+    andi a1, a1, 0x7f    # result_mant &= 0x7f
+    addi a0, a0, 1       # result_exp += 1
+    j bf16_mul.skip6
+bf16_mul.skip6_1:
+    srli a1, a1, 7      # result_mant >>= 7
+    andi a1, a1, 0x7f    # result_mant &= 0x7f
+bf16_mul.skip6:
+    li t6, 0xff         # t6 = dummy = 0xff
+    blt a0, t6, bf16_mul.skip7  # if result_exp < 0xff goto skip7
+    slli a0, t1, 15     # a0 = result_sign << 15
+    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    ret
+bf16_mul.skip7:
+    blt zero, a0, bf16_mul.skip8  # if result_exp >= 0 goto skip8
+    li t6, -6        # t6 = dummy = -6
+    bge a0, t6, bf16_mul.skip7_1  # if result_exp >= -6 goto skip7_1
+    slli a0, t1, 15     # a0 = result_sign << 15
+    ret
+bf16_mul.skip7_1:
+    li t6, 1        # t6 = dummy = 1
+    sub t6, t6, a0     # t6 = 1 - result_exp
+    srl a1, a1, t6     # result_mant >>= (1 - result_exp)
+    li a0, 0        # result_exp = 0
+    slli t1, t1, 15     # t1 = result_sign << 15
+    andi a0, a0, 0xff   # a0 = result_exp & 0xff
+    slli a0, a0, 7     # a0 = (result_exp & 0xff) << 7
+    andi a1, a1, 0x7f   # a1 = result_mant & 0x7f
+    or a0, t1 , a0    # a0 = (result_sign << 15) | (result_exp & 0xff) << 7
+    ori a0, a0, a1     # return (result_sign << 15) | (result_exp & 0xff) << 7 | (result_mant &
+    ret
+
+# ===============================
+# Function: bf16_div(bf16_t a, bf16_t b)
+# ===============================
+
+bf16_div:
+    # Input: a0 = a, a1 = b
+    # Output: a0 = result
+    srli t0, a0, 15       # t0 = a >> 15
+    andi t0, t0, 1        # t0 = sign_a
+    srli t1, a1, 15       # t1 = b >> 15
+    andi t1, t1, 1        # t1 = sign_b
+    srli t2, a0, 7        # t2 = a >> 7
+    andi t2, t2, 0xff     # t2 = exp_a
+    srli t3, a1, 7        # t3 = b >> 7
+    andi t3, t3, 0xff     # t3 = exp_b
+    andi t4, a0, 0x7f     # t4 = mant_a
+    andi t5, a1, 0x7f     # t5 = mant_b
+    xor t0, t0, t1        # t0 = result_sign = sign_a ^ sign_b
+    li t6, 0xff           # t6 = dummy = 0xff
+    bne t3, t6, bf16_mul.skip1  # if exp_b != 0xff goto skip1
+    beq t5, zero, bf16_mul.skip1_1  # if mant_b == 0 goto skip1_1
+    mv a0, a1          # return b
+    ret
+bf16_mul.skip1_1:
+    bne t2, t6, bf16_mul.skip1_2  # if exp_a != 0xff goto skip1_2
+    beq t4, zero, bf16_mul.skip1_2  # if mant_a == 0 goto skip1_2
+    li a0, 0x7fc0       # return NaN
+    ret
+bf16_mul.skip1_2:
+    slli a0, t0, 15     # a0 = result_sign << 15
+    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    ret
+bf16_mul.skip1:
+    bne t3, zero, bf16_mul.skip2  # if exp_b != 0 goto skip2
+    bne t5, zero, bf16_mul.skip2 # if mant_b == 0 goto skip2
+    bne t2, zero, bf16_mul.skip2_1  # if exp_a != 0 goto skip2_1
+    bne t4, zero, bf16_mul.skip2_1  # if mant_a == 0 goto skip2_1
+    li a0, 0x7fc0       # return NaN
+    ret
+bf16_mul.skip2_1:
+    slli a0, t0, 15     # a0 = result_sign << 15
+    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    ret
+bf16_mul.skip2:
+    li t6, 0xff           # t6 = dummy = 0xff
+    bne t2, t6, bf16_mul.skip3   # if exp_a != 0xff goto skip3
+    beq t4, zero, bf16_mul.skip3_1  # if mant_a == 0 goto skip3_1
+    ret
+bf16_mul.skip3_1:
+    slli a0, t0, 15     # a0 = result_sign << 15
+    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    ret
+bf16_mul.skip3:
+    bne t2, zero ,bf16_mul.skip4 # if exp_a != 0 goto skip4
+    ori a0, t4, 0x80     # mant_a |= 0x80
+bf16_mul.skip4:
+    bne t3, zero, bf16_mul.skip5  # if exp_b != 0 goto skip5
+    ori t5, t5, 0x80     # mant_b |= 0x80
+bf16_mul.skip5:
+    slli t4, t4, 15     # dividend = mant_a <<= 15
+    li a1, 0        # quotient = 0
+    li t6, 0        # i = 0
+    li a0, 16       # a0 = dummy = 16
+bf16_div.loop1:
+    bge t6, a0, bf16_div.loop1_end  # if i >= 16 goto loop1_end
+    slli a1, a1, 1      # quotient <<= 1
+    li t1, 15       # t1 = dummy = 15
+    sub t1, t1, t6     # t1 = 15 - i
+    sll t1, t5, t1     # t1 = divisor << (15 - i)
+    blt t4, t1, bf16_div.skip_sub  # if dividend < t1 goto skip_sub
+    sub t4, t4, t1     # dividend -= t1
+    ori a1, a1, 1      # quotient |= 1
+bf16_div.skip_sub:
+    addi t6, t6, 1    # i++
+bf16_div.loop_end:
+    sub t1, t2, t3     # result_exp = exp_a - exp_b
+    addi t1, t1, 127   # result_exp += 127
+    bne t2, zero, bf16_div.skip6 # if exp_a != 0 goto skip6
+    addi t1, t1, -1    # result_exp -= 1
+bf16_div.skip6:
+    bne t3, zero, bf16_div.skip7 # if exp_b != 0 goto skip7
+    addi t1, t1, 1    # result_exp += 1
+bf16_div.skip7:
+    andi t6, a1, 0x80   # t6 = quotient & 0x80
+    beq t6, zero, bf16_div.loop2  # if t6 == 0 goto loop2
+    srli a1, a1, 8      # quotient >>= 8
+    j bf16_div.skip8
+bf16_div.loop2:
+    andi t6, a1, 0x8000  # t6 = quotient & 0x8000
+    beq t6, zero, bf16_div.loop2_end  # if t6 == 0 goto loop2_end
+    li t6, 1       # t6 = dummy = 1
+    bge t6, t1, bf16_div.loop2_end  # if t6 >= result_exp goto loop2_end
+    slli a1, a1, 1      # quotient <<= 1
+    addi t1, t1, -1     # result_exp -= 1
+    j bf16_div.loop2
+bf16_div.loop2_end:
+    srli a1, a1, 8      # quotient >>= 8
+bf16_div.skip8:
+    andi a1, a1, 0x7f    # quotient &= 0x7f
+    li t6, 0xff         # t6 = dummy = 0xff
+    blt t1, t6, bf16_div.skip9  # if result_exp < 0xff goto skip9
+    slli a0, t0, 15     # a0 = result_sign << 15
+    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    ret
+bf16_div.skip9:
+    blt zero, t1, bf16_div.skip10  # if result_exp >= 0 goto skip10
+    slli a0, t0, 15     # a0 = result_sign << 15
+    ret
+bf16_div.skip10:
+    slli t0, t0, 15     # t0 = result_sign << 15
+    andi t1, t1, 0xff   # t1 = result_exp & 0xff
+    slli t1, t1, 7     # t1 = (result_exp & 0xff) << 7
+    andi a1, a1, 0x7f   # a1 = quotient & 0x7f
+    or a0, t0, t1    # a0 = (result_sign << 15) | (result_exp & 0xff) << 7
+    or a0, a0, a1     # return (result_sign << 15) | (result_exp & 0xff) << 7 | (quotient & 0x7f)
+    ret
