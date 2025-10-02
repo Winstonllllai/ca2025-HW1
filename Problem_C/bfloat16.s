@@ -300,7 +300,6 @@ bf16_mul.skip5_1:
 bf16_mul.skip5_2:
     ori t5, t5, 0x80     # mant_b |= 0x80
 bf16_mul.skip5:
-
 # result_mant = (uint32_t) mant_a * mant_b
 mv a1, t5       # a1 = result_exp = mant_b
 slli t4, t4, 16  # mant_a <<= 16
@@ -471,4 +470,237 @@ bf16_div.skip10:
     andi a1, a1, 0x7f   # a1 = quotient & 0x7f
     or a0, t0, t1    # a0 = (result_sign << 15) | (result_exp & 0xff) << 7
     or a0, a0, a1     # return (result_sign << 15) | (result_exp & 0xff) << 7 | (quotient & 0x7f)
+    ret
+
+# ================================
+# Function: bf16_sqrt(bf16_t a)
+# ================================
+bf16_sqrt:
+    # Input: a0 = a
+    # Output: a0 = result
+    srli t0, a0, 15       # t0 = sign = a >> 15
+    andi t0, t0, 1        # t0 = sign = (a >> 15) & 1
+    srli t1, a0, 7        # t1 = exp = a >> 7
+    andi t1, t1, 0x7f     # t1 = exp = (a >> 7) & 0x7f
+    andu t2, a0, 0x7f     # t2 = mant = a & 0x7f
+    li t6, 0xff           # t6 = dummy = 0xff
+    bne t1, t6, bf16_sqrt.skip1  # if exp != 0xff goto skip1
+    beq t2, zero, bf16_sqrt.skip1_1  # if mant == 0 goto skip1_1
+    ret                     # return a
+bf16_sqrt.skip1_1:
+    beq t0, zero, bf16_sqrt.skip1_2  # if sign == 0 goto skip1_2
+    li a0, 0x7fc0       # return NaN
+    ret
+bf16_sqrt.skip1_2:
+    ret
+bf16_sqrt.skip1:
+    bne t1, zero, bf16_sqrt.skip2  # if exp != 0 goto skip2
+    bne t2, zero, bf16_sqrt.skip2  # if mant != 0 goto skip2
+    li a0, 0x0000      # return 0
+    ret
+bf16_sqrt.skip2:
+    beq t0, zero, bf16_sqrt.skip3  # if sign == 0 goto skip3
+    li a0, 0x7fc0       # return NaN
+    ret
+bf16_sqrt.skip3:
+    bne t1, zero, bf16_sqrt.skip4  # if exp != 0 goto skip4
+    li a0, 0x0000      # return 0
+    ret
+bf16_sqrt.skip4:
+    addi a0, t1, -127  # a0 = e = exp - 127
+    ori t2, t2,0x80  # t2 = m = mant |= 0x80
+    andi t6, a0, 1     # t6 = e & 1
+    beq t6, zero, bf16_sqrt.skip5_1  # if t6 == 0 goto skip5_1
+    slli t2, t2, 1     # m <<= 1
+    addi t1, a0, -1   # t111 = new_exp = e - 1
+    srli t1, t1, 1    # new_exp = (e - 1) >> 1
+    addi t1, t1, 127  # new_exp += 127
+    j bf16_sqrt.skip5
+bf16_sqrt.skip5_1:
+    srli t1, a0, 1    # new_exp = e >> 1
+    addi t1, t1, 127  # new_exp += 127
+bf16_sqrt.skip5:
+    li a0, 90      # a0 = low = 90
+    li t0, 256     # t0 = high = 256
+    li t3, 128    # t3 = result = 128
+bf16_sqrt.loop1:
+    blt t0, a0, bf16_sqrt.loop1_end  # if high < low goto loop1_end
+    add t4, a0,t0   # t4 = mid = (low + high)
+    srli t4, t4, 1  # mid = (low + high) >> 1
+    # uint32_t sq = (mid * mid) / 128; 
+    # doing multiplication
+    mv t5, t4       # t5 = mid
+    slli t4, t4, 16  # mid <<= 16
+    li t6, 0        # t6 = i = 0
+    li t0, 16       # t0 = dummy = 16
+bf16_sqrt.mul_loop:
+    bge t6, t0, bf16_sqrt.mul_end  # if i >= 16 goto mul_end
+    andi a0, t5, 1    # a0 = dummy = sq & 1
+    beq a0, zero, bf16_sqrt.skip_add1
+    add t5, t5, t4   # sq += mid
+bf16_sqrt.skip_add1:
+    srli t5, t5, 1    # sq >>= 1
+    addi t6, t6, 1    # i++
+    j bf16_sqrt.mul_loop
+bf16_sqrt.mul_end:
+    li a0, 90      # a0 = low = 90
+    li t0, 256     # t0 = high = 256
+    srli t4, t4, 16   # mid >>= 16
+    blt t2, t5, bf16_sqrt.skip6_1  # if m < sq goto skip6_1
+    mv t3, t4      # result = mid
+    addi a0, t4, -1   # low = mid - 1
+    j bf16_sqrt.skip6
+bf16_sqrt.skip6_1:
+    addi t0, t4, -1   # high = mid - 1
+bf16_sqrt.skip6:
+    j bf16_sqrt.loop1
+bf16_sqrt.loop1_end:
+    li t6, 256     # t6 = dummy = 256
+    blt t3, t6, bf16_sqrt.skip7_1  # if result < 256 goto skip7
+    srli t3, t3, 1    # result >>= 1
+    addi t1, t1, 1   # new_exp += 1
+    j bf16_sqrt.skip7
+bf16_sqrt.skip7_1:
+    li t6, 128   # t6 = dummy = 128
+    bge t3, t6, bf16_sqrt.skip7  # if result >= 128 goto skip7
+bf16_sqrt.loop2:
+    bge t3, t6, bf16_sqrt.skip7  # if result >= 128 goto skip7
+    li t6, 1       # t6 = dummy = 1
+    bge t6, t1, bf16_sqrt.skip7  # if t6 >= new_exp goto skip7
+    slli t3, t3, 1     # result <<= 1
+    addi t1, t1, -1    # new_exp -= 1
+    j bf16_sqrt.loop2
+bf16_sqrt.skip7:
+    andi a0, t3, 0x7f  # result_mant = result & 0x7f
+    li t6, 0xff        # t6 = dummy = 0xff
+    blt t1, t6, bf16_sqrt.skip8  # if new_exp < 0xff goto skip8
+    li a0, 0x7f80      # return 0x7f80
+    ret
+bf16_sqrt.skip8:
+    blt zero, t1, bf16_sqrt.skip9  # if new_exp >= 0 goto skip9
+    li a0, 0x0000      # return
+    ret
+bf16_sqrt.skip9:
+    andi t1, t1, 0xff   # new_exp = new_exp & 0xff
+    slli t1, t1, 7      # new_exp = (new_exp & 0xff) << 7
+    or a0, a0, t1     # a0 = (new_exp & 0xff) << 7 | (result_mant & 0x7f)
+    ret
+
+# ===============================
+# Function: bf16_eq(bf16_t a, bf16_t b)
+# ===============================
+bf16_eq:
+    # Input: a0 = a, a1 = b
+    # Output: a0 = result (1 if a == b else 0)
+    mv t0, a0      # t0 = a
+    addi sp, sp, -4     # Allocate stack space
+    sw ra, 0(sp)        # Save return address
+    jal bf16_isnan   # Call bf16_isnan(a)
+    bne a0, zero, bf16_eq.nan  # if isnan(a) return 0
+    mv a0, a1      # a0 = b
+    jal bf16_isnan   # Call bf16_isnan(b)
+    beq a0, zero, bf16_eq.not_nan  # if !isnan(b) goto not_nan
+bf16_eq.nan:
+    li a0, 0        # return 0
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+bf16_eq.not_nan:
+    mv a0, t0      # a0 = a
+    jal bf16_iszero  # Call bf16_iszero(a)
+    beq a0, zero, bf16_eq.not_zero  # if !iszero(a) goto not_zero
+    mv a0, a1      # a0 = b
+    jal bf16_iszero  # Call bf16_iszero(b)
+    beq a0, zero, bf16_eq.not_zero  # if !iszero(b) goto not_zero
+    li a0, 1        # return 1
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+bf16_eq.not_zero:
+    beq t0, a1, bf16_eq.equal  # if a == b
+    li a0, 0       # return 0
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+bf16_eq.equal:
+    li a0, 1        # return 1
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+
+# ===============================
+# Function: bf16_lt(bf16_t a, bf16_t b)
+# ===============================
+bf16_lt:
+    # Input: a0 = a, a1 = b
+    # Output: a0 = result (1 if a < b else 0)
+    mv t0, a0      # t0 = a
+    addi sp, sp, -4     # Allocate stack space
+    sw ra, 0(sp)        # Save return address
+    jal bf16_isnan   # Call bf16_isnan(a)
+    bne a0, zero, bf16_lt.nan  # if isnan(a) return 0
+    mv a0, a1      # a0 = b
+    jal bf16_isnan   # Call bf16_isnan(b)
+    bne a0, zero, bf16_lt.nan  # if isnan(b) goto nan
+bf16_lt.not_nan:
+    mv a0, t0      # a0 = a
+    jal bf16_iszero  # Call bf16_iszero(a)
+    beq a0, zero, bf16_lt.not_zero  # if !iszero(a) goto not_zero
+    mv a0, a1      # a0 = b
+    jal bf16_iszero  # Call bf16_iszero(b)
+    beq a0, zero, bf16_lt.not_zero  # if !iszero(b) goto not_zero
+bf16_lt.nan:
+    li a0, 0        # return 0
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+bf16_lt.not_zero:
+    srli t1, t0, 15  # t1 = sign_a = a >> 15
+    andi t1, t1, 1    # t1 = sign_a = (a >> 15) & 1
+    srli t2, a1, 15  # t2 = sign_b = b >> 15
+    andi t2, t2, 1    # t2 = sign_b = (b >> 15) & 1
+    beq t1, t2, bf16_lt.same_sign  # if sign_a == sign_b goto same_sign
+    blt t1, t2, bf16_lt.less  # if sign_a < sign_b goto less
+    li a0, 1       # return 1
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+bf16_lt.less:
+    li a0, 0       # return 0
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+bf16_lt.same_sign:
+    beq t1, zero, bf16_lt.positive  # if sign_a == 0 goto positive
+    bge a1, t0, bf16_lt.less  # if b >= a goto less
+    li a0, 1       # return 1
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+bf16_lt.less:
+    li a0, 0       # return 0
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+bf16_lt.positive:
+    bge t0, a1, bf16_lt.less  # if a >= b goto less
+    li a0, 1       # return 1
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    ret
+
+# ===============================
+# Function: bf16_gt(bf16_t a, bf16_t b)
+# ===============================
+bf16_gt:
+    # Input: a0 = a, a1 = b
+    # Output: a0 = result (1 if a > b else 0)
+    addi sp, sp, -4     # Allocate stack space
+    sw ra, 0(sp)        # Save return address
+    xor a0, a0, a1       # a0 = a ^ b
+    xor a1, a0, a1       # a1 = b ^ (a ^ b) = a
+    xor a0, a0, a1       # a0 = (a ^ b) ^ a = b
+    jal bf16_lt  # Call bf16_lt(b, a)
+    lw ra, 0(sp)        # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
     ret
