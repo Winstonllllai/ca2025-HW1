@@ -1,19 +1,59 @@
-.data
-
 .text
+.global main
+# ==============================
+# Main function
+# ==============================
+main:
+    la a0, str_bts
+    li a7, 4         # syscall for print string
+    ecall
+    addi sp, sp, -8    # Allocate stack space
+    sw ra, 0(sp)       # Save return address
+    sw s0, 4(sp)       # Save s0
+    li s0, 0           # s0 = failed = 0
+    jal test_basic_conversions
+    or s0, s0, a0      # failed |= test_basic_conversions()
+    jal test_special_values
+    or s0, s0, a0      # failed |= test_special_values()
+    jal test_arithmetic
+    or s0, s0, a0      # failed |= test_arithmetic()
+    jal test_comparisons
+    or s0, s0, a0      # failed |= test_comparisons()
+    jal test_edge_cases
+    or s0, s0, a0      # failed |= test_edge_cases()
+    jal test_rounding
+    beq s0, zero, main.all_passed  # if failed == 0 goto all_passed
+    la a0, str_tf
+    li a7, 4         # syscall for print string
+    ecall
+    li a0, 1          # return 1
+    lw ra, 0(sp)       # Restore return address
+    lw s0, 4(sp)       # Restore s0
+    addi sp, sp, 8     # Deallocate stack space
+    ret
+main.all_passed:
+    la a0, str_atp
+    li a7, 4         # syscall for print string
+    ecall
+    li a0, 0          # return 0
+    lw ra, 0(sp)       # Restore return address
+    lw s0, 4(sp)       # Restore s0
+    addi sp, sp, 8     # Deallocate stack space
+    ret
+
 # ===============================
 # Function: int bf16_isnan(bf16_t a)
 # ===============================
 bf16_isnan:
     # Input: a0 = a.bits
     # Output: a0 = 1 if a is NaN, else 0
-    andi t0, a0, 0x7f80      # t0 = a.bit &0x7f80
-    li t1, 0x7f80            # t1 = 0x7f80
+    li t0, 0x7f80
+    and t1, a0, t0      # t1 = a.bit & 0x7f80
     beq t0, t1, bf16_isnan.skip1    # if t0 == t1 goto skip1
     li a0, 0                  # return false
     ret
 bf16_isnan.skip1:
-    andi t0, a0, 0x007f      # t0 = a.bit &0x007f
+    andi t0, a0, 0x007f      # t0 = a.bit & 0x007f
     bne t0,zero, bf16_isnan.skip2  # if t0 != 0 goto skip2
     li a0, 0                  # return false
     ret
@@ -27,17 +67,18 @@ bf16_isnan.skip2:
 bf16_isinf:
     # Input: a0 = a.bits
     # Output: a0 = 1 if a is Inf, else 0
-    andi t0, a0, 0x7f80      # t0 = a.bit &0x7f80
+    li t0, 0x7f80
+    and t0, a0, t0      # t0 = a.bit & 0x7f80
     li t1, 0x7f80            # t1 = 0x7f80
-    beq t0, t1, bf16_isnan.skip1    # if t0 == t1 goto skip1
+    beq t0, t1, bf16_isinf.skip1    # if t0 == t1 goto skip1
     li a0, 0                  # return false
     ret
-bf16_isnan.skip1:
+bf16_isinf.skip1:
     andi t0, a0, 0x007f      # t0 = a.bit &0x007f
-    beq t0,zero, bf16_isnan.skip2  # if t0 == 0 goto skip2
+    beq t0,zero, bf16_isinf.skip2  # if t0 == 0 goto skip2
     li a0, 0                  # return false
     ret
-bf16_isnan.skip2:
+bf16_isinf.skip2:
     li a0, 1                  # return true
     ret
 
@@ -47,7 +88,8 @@ bf16_isnan.skip2:
 bf16_iszero:
     # Input: a0 = a.bits
     # Output: a0 = 1 if a is zero, else 0
-    andi a0, a0, 0x7fff      # a0 = a.bit & 0x7fff
+    li t0, 0x7fff
+    and a0, a0, t0      # a0 = a.bit & 0x7fff
     beq a0, zero, bf16_iszero.zero  # if a0 == 0 goto zero
     li a0, 0                  # return false
     ret
@@ -66,12 +108,14 @@ f32_to_bf16:
     li t1, 0xff          # t1 = dummy= 0xff
     bne t0, t1, f32_to_bf16.skip # if t0 != 0xff goto skip
     srli a0, a0, 16      # a0 = val >> 16
-    andi a0, a0, 0xffff  # a0 = (val >> 16) & 0xffff
+    li t1, 0xffff
+    and a0, a0, t1  # a0 = (val >> 16) & 0xffff
     ret
 f32_to_bf16.skip:
     srli t0, a0, 16       # t0 = val >> 16
     andi t0, t0, 1        # t0 = (val >> 16) & 1
-    addi t0, t0, 0x7fff   # t0 = ((val >> 16) & 1) + 0x7fff
+    li t1, 0x7fff
+    add t0, t0, t1   # t0 = ((val >> 16) & 1) + 0x7fff
     add a0, a0, t0       # a0 = val + t0
     srli a0, a0, 16      # a0 = (val + t0) >> 16
     ret
@@ -150,11 +194,11 @@ bf16_add.skip7:
     bge t0,zero, bf16_add.skip8  # if exp_diff >= 0 goto skip8
     mv t1, t3      # result_exp = exp_b
     li t6, -8         # t6 = dummy = -8
-    bge t0, t6, bf16_add.skip7_2  # if exp_diff >= -8 goto skip7_2
+    blt t6, t0, bf16_add.skip8_1  # if exp_diff >= -8 goto skip8_1
     mv a0, a1      # return b
     ret
 bf16_add.skip8_1:
-    srl t4, t4, -t0    # mant_a >>= -exp_diff
+    sll t4, t4, t0    # mant_a >>= -exp_diff
     j bf16_add.skip9
 bf16_add.skip8:
     mv t1, t2      # result_exp = exp_a
@@ -173,7 +217,8 @@ bf16_add.skip9:
     li t6, 0xff       # t6 = dummy = 0xff
     blt t1, t6, bf16_add.skip11  # if result_exp < 0xff goto skip10
     slli a1 ,a1,15      # a1 = result_sign << 15
-    ori a0, a1, 0x7f80  # return (result_sign << 15) | 0x7f80
+    li t6, 0x7f80       # t6 = dummy = 0x7f80
+    or a0, a1, t6      # return (result_sign << 15) | 0x7f80
     ret
 bf16_add.skip10:
     blt t4, t5, bf16_add.skip11_1  # if mant_a < mant_b goto skip11_1
@@ -199,8 +244,8 @@ bf16_add.skip11:
     slli a1 ,a1,15      # a1 = result_sign << 15
     andi t1, t1, 0xff   # t1 = result_exp & 0xff
     slli t1, t1, 7      # t1 = (result_exp & 0xff) << 7
-    ori t6, a1, t1      # t6 = (result_sign << 15) | (result_exp & 0xff) << 7
-    ori a0, t6, a0      # return (result_sign << 15) | (result_exp & 0xff) << 7 | (result_mant & 0x7f)
+    or t6, a1, t1      # t6 = (result_sign << 15) | (result_exp & 0xff) << 7
+    or a0, t6, a0      # return (result_sign << 15) | (result_exp & 0xff) << 7 | (result_mant & 0x7f)
     ret
 
 # ===============================
@@ -209,7 +254,8 @@ bf16_add.skip11:
 bf16_sub:
     # Input: a0 = a, a1 = b
     # Output: a0 = result
-    xori a1, a1, 0x8000   # b.bits ^= 0x8000
+    li t6, 0x8000
+    xor a1, a1, t6   # b.bits ^= 0x8000
     addi sp, sp, -4     # Allocate stack space
     sw ra, 0(sp)        # Save return address
     jal bf16_add      # Call bf16_add
@@ -245,7 +291,8 @@ bf16_mul.skip1_1:
     ret
 bf16_mul.skip1_2:
     slli a0, t1, 15     # a0 = result_sign << 15
-    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    li  t6, 0x7f80
+    or a0, a0, t6       # return (result_sign << 15) | 0x7f80
     ret
 bf16_mul.skip1:
     li t6, 0xff           # t6 = dummy = 0xff
@@ -260,7 +307,8 @@ bf16_mul.skip2_1:
     ret
 bf16_mul.skip2_2:
     slli a0, t1, 15     # a0 = result_sign << 15
-    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    li t6, 0x7f80
+    or a0, a0, t6       # return (result_sign << 15) | 0x7f80
     ret
 bf16_mul.skip2:
     bne t2, zero, bf16_mul.skip3_1  # if exp_a != 0 goto skip3_1
@@ -317,11 +365,11 @@ bf16_mul.skip_add:
 bf16_mul.mul_end:
     srli t4, t4, 16   # mant_a >>= 16
     # end result_mant = (uint32_t) mant_a * mant_b
-
     add a0, a0, t2     # result_exp = exp_adjust + exp_a
     add a0, a0, t3     # result_exp = exp_adjust + exp
     addi a0, a0, -127  # result_exp -= 127
-    andi t6, a1, 0x8000  # t6 = result_mant & 0x8000
+    li t6, 0x8000
+    and t6, a1, t6  # t6 = result_mant & 0x8000
     beq t6, zero, bf16_mul.skip6_1  # if t6 == 0 goto skip6_1
     srli a1, a1, 8      # result_mant >>= 8
     andi a1, a1, 0x7f    # result_mant &= 0x7f
@@ -334,31 +382,32 @@ bf16_mul.skip6:
     li t6, 0xff         # t6 = dummy = 0xff
     blt a0, t6, bf16_mul.skip7  # if result_exp < 0xff goto skip7
     slli a0, t1, 15     # a0 = result_sign << 15
-    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    li t6, 0x7f80
+    or a0, a0, t6       # return (result_sign << 15) | 0x7f80
     ret
 bf16_mul.skip7:
     blt zero, a0, bf16_mul.skip8  # if result_exp >= 0 goto skip8
     li t6, -6        # t6 = dummy = -6
-    bge a0, t6, bf16_mul.skip7_1  # if result_exp >= -6 goto skip7_1
+    bge a0, t6, bf16_mul.skip8_1  # if result_exp >= -6 goto skip8_1
     slli a0, t1, 15     # a0 = result_sign << 15
     ret
-bf16_mul.skip7_1:
+bf16_mul.skip8_1:
     li t6, 1        # t6 = dummy = 1
     sub t6, t6, a0     # t6 = 1 - result_exp
     srl a1, a1, t6     # result_mant >>= (1 - result_exp)
     li a0, 0        # result_exp = 0
+bf16_mul.skip8:
     slli t1, t1, 15     # t1 = result_sign << 15
     andi a0, a0, 0xff   # a0 = result_exp & 0xff
     slli a0, a0, 7     # a0 = (result_exp & 0xff) << 7
     andi a1, a1, 0x7f   # a1 = result_mant & 0x7f
-    or a0, t1 , a0    # a0 = (result_sign << 15) | (result_exp & 0xff) << 7
-    ori a0, a0, a1     # return (result_sign << 15) | (result_exp & 0xff) << 7 | (result_mant &
+    or a0, t1, a0    # a0 = (result_sign << 15) | (result_exp & 0xff) << 7
+    or a0, a0, a1    # return (result_sign << 15) | (result_exp & 0xff) << 7 | (result_mant & 0x7f)
     ret
 
 # ===============================
 # Function: bf16_div(bf16_t a, bf16_t b)
 # ===============================
-
 bf16_div:
     # Input: a0 = a, a1 = b
     # Output: a0 = result
@@ -374,46 +423,49 @@ bf16_div:
     andi t5, a1, 0x7f     # t5 = mant_b
     xor t0, t0, t1        # t0 = result_sign = sign_a ^ sign_b
     li t6, 0xff           # t6 = dummy = 0xff
-    bne t3, t6, bf16_mul.skip1  # if exp_b != 0xff goto skip1
-    beq t5, zero, bf16_mul.skip1_1  # if mant_b == 0 goto skip1_1
+    bne t3, t6, bf16_div.skip1  # if exp_b != 0xff goto skip1
+    beq t5, zero, bf16_div.skip1_1  # if mant_b == 0 goto skip1_1
     mv a0, a1          # return b
     ret
-bf16_mul.skip1_1:
-    bne t2, t6, bf16_mul.skip1_2  # if exp_a != 0xff goto skip1_2
-    beq t4, zero, bf16_mul.skip1_2  # if mant_a == 0 goto skip1_2
+bf16_div.skip1_1:
+    bne t2, t6, bf16_div.skip1_2  # if exp_a != 0xff goto skip1_2
+    beq t4, zero, bf16_div.skip1_2  # if mant_a == 0 goto skip1_2
     li a0, 0x7fc0       # return NaN
     ret
-bf16_mul.skip1_2:
+bf16_div.skip1_2:
     slli a0, t0, 15     # a0 = result_sign << 15
-    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    li t6, 0x7f80       # t6 = dummy = 0x7f80
+    or a0, a0, t6       # return (result_sign << 15) | 0x7f80
     ret
-bf16_mul.skip1:
-    bne t3, zero, bf16_mul.skip2  # if exp_b != 0 goto skip2
-    bne t5, zero, bf16_mul.skip2 # if mant_b == 0 goto skip2
-    bne t2, zero, bf16_mul.skip2_1  # if exp_a != 0 goto skip2_1
-    bne t4, zero, bf16_mul.skip2_1  # if mant_a == 0 goto skip2_1
+bf16_div.skip1:
+    bne t3, zero, bf16_div.skip2  # if exp_b != 0 goto skip2
+    bne t5, zero, bf16_div.skip2 # if mant_b == 0 goto skip2
+    bne t2, zero, bf16_div.skip2_1  # if exp_a != 0 goto skip2_1
+    bne t4, zero, bf16_div.skip2_1  # if mant_a == 0 goto skip2_1
     li a0, 0x7fc0       # return NaN
     ret
-bf16_mul.skip2_1:
+bf16_div.skip2_1:
     slli a0, t0, 15     # a0 = result_sign << 15
-    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    li t6, 0x7f80       # t6 = dummy = 0x7f80
+    or a0, a0, t6       # return (result_sign << 15) | 0x7f80
     ret
-bf16_mul.skip2:
+bf16_div.skip2:
     li t6, 0xff           # t6 = dummy = 0xff
-    bne t2, t6, bf16_mul.skip3   # if exp_a != 0xff goto skip3
-    beq t4, zero, bf16_mul.skip3_1  # if mant_a == 0 goto skip3_1
+    bne t2, t6, bf16_div.skip3   # if exp_a != 0xff goto skip3
+    beq t4, zero, bf16_div.skip3_1  # if mant_a == 0 goto skip3_1
     ret
-bf16_mul.skip3_1:
+bf16_div.skip3_1:
     slli a0, t0, 15     # a0 = result_sign << 15
-    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    li t6, 0x7f80       # t6 = dummy = 0x7f80
+    or a0, a0, t6       # return (result_sign << 15) | 0x7f80
     ret
-bf16_mul.skip3:
-    bne t2, zero ,bf16_mul.skip4 # if exp_a != 0 goto skip4
+bf16_div.skip3:
+    bne t2, zero ,bf16_div.skip4 # if exp_a != 0 goto skip4
     ori a0, t4, 0x80     # mant_a |= 0x80
-bf16_mul.skip4:
-    bne t3, zero, bf16_mul.skip5  # if exp_b != 0 goto skip5
+bf16_div.skip4:
+    bne t3, zero, bf16_div.skip5  # if exp_b != 0 goto skip5
     ori t5, t5, 0x80     # mant_b |= 0x80
-bf16_mul.skip5:
+bf16_div.skip5:
     slli t4, t4, 15     # dividend = mant_a <<= 15
     li a1, 0        # quotient = 0
     li t6, 0        # i = 0
@@ -429,7 +481,7 @@ bf16_div.loop1:
     ori a1, a1, 1      # quotient |= 1
 bf16_div.skip_sub:
     addi t6, t6, 1    # i++
-bf16_div.loop_end:
+bf16_div.loop1_end:
     sub t1, t2, t3     # result_exp = exp_a - exp_b
     addi t1, t1, 127   # result_exp += 127
     bne t2, zero, bf16_div.skip6 # if exp_a != 0 goto skip6
@@ -443,7 +495,8 @@ bf16_div.skip7:
     srli a1, a1, 8      # quotient >>= 8
     j bf16_div.skip8
 bf16_div.loop2:
-    andi t6, a1, 0x8000  # t6 = quotient & 0x8000
+    li t6, 0x8000
+    and t6, a1, t6  # t6 = quotient & 0x8000
     beq t6, zero, bf16_div.loop2_end  # if t6 == 0 goto loop2_end
     li t6, 1       # t6 = dummy = 1
     bge t6, t1, bf16_div.loop2_end  # if t6 >= result_exp goto loop2_end
@@ -457,7 +510,8 @@ bf16_div.skip8:
     li t6, 0xff         # t6 = dummy = 0xff
     blt t1, t6, bf16_div.skip9  # if result_exp < 0xff goto skip9
     slli a0, t0, 15     # a0 = result_sign << 15
-    ori a0, a0, 0x7f80   # return (result_sign << 15) | 0x7f80
+    li t6, 0x7f80       # t6 = dummy = 0x7f80
+    or a0, a0, t6       # return (result_sign << 15) | 0x7f80
     ret
 bf16_div.skip9:
     blt zero, t1, bf16_div.skip10  # if result_exp >= 0 goto skip10
@@ -482,7 +536,7 @@ bf16_sqrt:
     andi t0, t0, 1        # t0 = sign = (a >> 15) & 1
     srli t1, a0, 7        # t1 = exp = a >> 7
     andi t1, t1, 0x7f     # t1 = exp = (a >> 7) & 0x7f
-    andu t2, a0, 0x7f     # t2 = mant = a & 0x7f
+    andi t2, a0, 0x7f     # t2 = mant = a & 0x7f
     li t6, 0xff           # t6 = dummy = 0xff
     bne t1, t6, bf16_sqrt.skip1  # if exp != 0xff goto skip1
     beq t2, zero, bf16_sqrt.skip1_1  # if mant == 0 goto skip1_1
@@ -592,9 +646,10 @@ bf16_sqrt.skip9:
 bf16_eq:
     # Input: a0 = a, a1 = b
     # Output: a0 = result (1 if a == b else 0)
-    mv t0, a0      # t0 = a
-    addi sp, sp, -4     # Allocate stack space
+    addi sp, sp, -8     # Allocate stack space
     sw ra, 0(sp)        # Save return address
+    sw s0, 4(sp)        # Save s0
+    mv s0, a0      # s0 = a
     jal bf16_isnan   # Call bf16_isnan(a)
     bne a0, zero, bf16_eq.nan  # if isnan(a) return 0
     mv a0, a1      # a0 = b
@@ -606,7 +661,7 @@ bf16_eq.nan:
     addi sp, sp, 4      # Deallocate stack space
     ret
 bf16_eq.not_nan:
-    mv a0, t0      # a0 = a
+    mv a0, s0      # a0 = a
     jal bf16_iszero  # Call bf16_iszero(a)
     beq a0, zero, bf16_eq.not_zero  # if !iszero(a) goto not_zero
     mv a0, a1      # a0 = b
@@ -617,15 +672,16 @@ bf16_eq.not_nan:
     addi sp, sp, 4      # Deallocate stack space
     ret
 bf16_eq.not_zero:
-    beq t0, a1, bf16_eq.equal  # if a == b
+    beq s0, a1, bf16_eq.equal  # if a == b
     li a0, 0       # return 0
     lw ra, 0(sp)        # Restore return address
     addi sp, sp, 4      # Deallocate stack space
     ret
 bf16_eq.equal:
     li a0, 1        # return 1
+    lw s0, 4(sp)        # Restore s0
     lw ra, 0(sp)        # Restore return address
-    addi sp, sp, 4      # Deallocate stack space
+    addi sp, sp, 8      # Deallocate stack space
     ret
 
 # ===============================
@@ -634,16 +690,19 @@ bf16_eq.equal:
 bf16_lt:
     # Input: a0 = a, a1 = b
     # Output: a0 = result (1 if a < b else 0)
-    mv t0, a0      # t0 = a
-    addi sp, sp, -4     # Allocate stack space
+    addi sp, sp, -16     # Allocate stack space
     sw ra, 0(sp)        # Save return address
+    sw s0, 4(sp)        # Save s0
+    sw s1, 8(sp)        # Save s1
+    sw s2, 12(sp)       # Save s2
+    mv s0, a0      # s0 = a
     jal bf16_isnan   # Call bf16_isnan(a)
     bne a0, zero, bf16_lt.nan  # if isnan(a) return 0
     mv a0, a1      # a0 = b
     jal bf16_isnan   # Call bf16_isnan(b)
     bne a0, zero, bf16_lt.nan  # if isnan(b) goto nan
 bf16_lt.not_nan:
-    mv a0, t0      # a0 = a
+    mv a0, s0      # a0 = a
     jal bf16_iszero  # Call bf16_iszero(a)
     beq a0, zero, bf16_lt.not_zero  # if !iszero(a) goto not_zero
     mv a0, a1      # a0 = b
@@ -655,38 +714,53 @@ bf16_lt.nan:
     addi sp, sp, 4      # Deallocate stack space
     ret
 bf16_lt.not_zero:
-    srli t1, t0, 15  # t1 = sign_a = a >> 15
-    andi t1, t1, 1    # t1 = sign_a = (a >> 15) & 1
-    srli t2, a1, 15  # t2 = sign_b = b >> 15
-    andi t2, t2, 1    # t2 = sign_b = (b >> 15) & 1
-    beq t1, t2, bf16_lt.same_sign  # if sign_a == sign_b goto same_sign
-    blt t1, t2, bf16_lt.less  # if sign_a < sign_b goto less
+    srli s1, s0, 15  # s1 = sign_a = a >> 15
+    andi s1, s1, 1    # s1 = sign_a = (a >> 15) & 1
+    srli s2, a1, 15  # s2 = sign_b = b >> 15
+    andi s2, s2, 1    # s2 = sign_b = (b >> 15) & 1
+    beq s1, s2, bf16_lt.same_sign  # if sign_a == sign_b goto same_sign
+    blt s1, s2, bf16_lt.less  # if sign_a < sign_b goto less
     li a0, 1       # return 1
+    lw s2, 12(sp)       # Restore s2
+    lw s1, 8(sp)        # Restore s1
+    lw s0, 4(sp)        # Restore s0
     lw ra, 0(sp)        # Restore return address
-    addi sp, sp, 4      # Deallocate stack space
+    addi sp, sp, 16      # Deallocate stack space
     ret
 bf16_lt.less:
     li a0, 0       # return 0
+    lw s2, 12(sp)       # Restore s2
+    lw s1, 8(sp)        # Restore s1
+    lw s0, 4(sp)        # Restore s0
     lw ra, 0(sp)        # Restore return address
-    addi sp, sp, 4      # Deallocate stack space
+    addi sp, sp, 16      # Deallocate stack space
     ret
 bf16_lt.same_sign:
     beq t1, zero, bf16_lt.positive  # if sign_a == 0 goto positive
-    bge a1, t0, bf16_lt.less  # if b >= a goto less
+    bge a1, t0, bf16_lt.less1  # if b >= a goto less
     li a0, 1       # return 1
+    lw s2, 12(sp)       # Restore s2
+    lw s1, 8(sp)        # Restore s1
+    lw s0, 4(sp)        # Restore s0
     lw ra, 0(sp)        # Restore return address
-    addi sp, sp, 4      # Deallocate stack space
+    addi sp, sp, 16      # Deallocate stack space
     ret
-bf16_lt.less:
+bf16_lt.less1:
     li a0, 0       # return 0
+    lw s2, 12(sp)       # Restore s2
+    lw s1, 8(sp)        # Restore s1
+    lw s0, 4(sp)        # Restore s0
     lw ra, 0(sp)        # Restore return address
-    addi sp, sp, 4      # Deallocate stack space
+    addi sp, sp, 16      # Deallocate stack space
     ret
 bf16_lt.positive:
     bge t0, a1, bf16_lt.less  # if a >= b goto less
     li a0, 1       # return 1
+    lw s2, 12(sp)       # Restore s2
+    lw s1, 8(sp)        # Restore s1
+    lw s0, 4(sp)        # Restore s0
     lw ra, 0(sp)        # Restore return address
-    addi sp, sp, 4      # Deallocate stack space
+    addi sp, sp, 16      # Deallocate stack space
     ret
 
 # ===============================
@@ -704,3 +778,675 @@ bf16_gt:
     lw ra, 0(sp)        # Restore return address
     addi sp, sp, 4      # Deallocate stack space
     ret
+
+
+# ============================================================================
+# Test functions
+# ============================================================================
+
+# ==============================
+# Function: test_basic_conversions(void)
+# ==============================
+test_basic_conversions:
+    la a0, str_tbc
+    li a7, 4          # syscall for print string
+    ecall
+    addi sp, sp, -24    # Allocate stack space
+    sw ra, 0(sp)       # Save return address
+    sw s0, 4(sp)       # Save s0
+    sw s1, 8(sp)       # Save s1
+    sw s2, 12(sp)      # Save s2
+    sw s3, 16(sp)      # Save s3
+    sw s4, 20(sp)      # Save s4
+    li s0, 0          # i = 0
+    li s1, 11         # num_test_val = 11
+    la s2, test_values  # load address of test_values
+test_basic_conversions.loop:
+    bge s0, s1, test_basic_conversions.loop_end  # if i >= num_test_val goto loop_end
+    lw s3, 0(s2)     # s3 = orig = load test_values[i]
+    mv a0, s3       # a0 = orig
+    jal f32_to_bf16 # Call f32_to_bf16(orig)
+    mv s4, a0      # s4 = bf = f32_to_bf16(orig)
+    jal bf16_to_f32 # Call bf16_to_f32(bf)
+    mv t0, a0     # t0 = conv = bf16_to_f32(bf)
+    beq s3, zero, test_basic_conversions.skip1  # if orig == 0 goto skip1
+    and a0, s3, t0   # a0 = orig & conv
+    lui t6, 0x80000
+    and a0, a0, t6  # a0 = (orig & conv) & 0x80000000
+    srli a0 ,a0, 31  # a0 = cond = ((orig & conv) & 0x80000000) >> 31
+    beq a0, zero, test_basic_conversions.skip1 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_sm
+    ecall 
+    li a0, 1
+    ret
+test_basic_conversions.skip1:
+    beq t3, zero, test_basic_conversions.skip2  # if orig == 0 goto skip2
+    mv a0, t4      # a0 = bf
+    jal bf16_isinf  # Call bf16_isinf(bf)
+    bne a0, zero, test_basic_conversions.skip2  # if isinf(bf) goto skip2
+    la a0, test_upper # load address of test_upper
+    slli t1, s0, 2     # t1 = i * 4
+    add a0, a0, t1   # a0 = &test_upper[i]
+    lw a0, 0(a0)   # a0 = test_upper[i]
+    la t2, test_lower # load address of test_lower
+    add t2, t2, t1   # t2 = &test_lower[i]
+    lw t2, 0(t2)   # t2 = test_lower[i]
+    blt t2, t0, test_basic_conversions.skip2  # if test_lower[i] < conv goto skip2
+    blt t0, a0, test_basic_conversions.skip2  # if conv < test_upper[i] goto skip2
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_retl
+    ecall 
+    li a0, 1
+    ret
+test_basic_conversions.skip2:
+    addi t2, t2, 4   # t2 = &test_values[i + 1]
+    addi t0, t0, 1   # i++
+    j test_basic_conversions.loop
+test_basic_conversions.loop_end:
+    lw s4, 20(sp)      # Restore s4
+    lw s3, 16(sp)      # Restore s3
+    lw s2, 12(sp)      # Restore s2
+    lw s1, 8(sp)       # Restore s1
+    lw s0, 4(sp)       # Restore s0
+    lw ra, 0(sp)       # Restore return address
+    addi sp, sp, 24      # Deallocate stack space
+    la a0, str_bcp
+    li a7, 4          # syscall for print string
+    ecall 
+    li a0, 0          # return 0
+    ret
+
+# ==============================
+# Function: test_special_values(void)
+# ==============================
+test_special_values:
+    la a0, str_tsv
+    li a7, 4          # syscall for print string
+    ecall
+    addi sp, sp, -4    # Allocate stack space
+    sw ra, 0(sp)       # Save return address
+    li t0, 0x7f80  # pos_inf = 0x7f80
+    mv a0, t0      # a0 = pos_inf
+    jal bf16_isinf  # Call bf16_isinf(pos_inf)
+    bne a0, zero, test_special_values.test_assert1 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_pind
+    ecall 
+    li a0, 1
+    ret
+test_special_values.test_assert1:
+    mv a0, t0      # a0 = pos_inf
+    jal bf16_isnan  # Call bf16_isnan(pos_inf)
+    beq a0, zero, test_special_values.test_assert2 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_idan
+    ecall 
+    li a0, 1
+    ret
+test_special_values.test_assert2:
+    li a0, 0xff80  # neg_inf = 0xff80
+    jal bf16_isinf  # Call bf16_isinf(neg_inf)
+    bne a0, zero, test_special_values.test_assert3 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_nind
+    ecall 
+    li a0, 1
+    ret
+test_special_values.test_assert3:
+    li t0, 0x7fc0  # nan = 0x7fc0
+    mv a0, t0      # a0 = nan
+    jal bf16_isnan  # Call bf16_isnan(nan)
+    bne a0, zero, test_special_values.test_assert4 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_nnd
+    ecall 
+    li a0, 1
+    ret
+test_special_values.test_assert4:
+    mv a0, t0      # a0 = nan
+    jal bf16_isinf  # Call bf16_isinf(nan)
+    beq a0, zero, test_special_values.test_assert5 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_ndai
+    ecall 
+    li a0, 1
+    ret
+test_special_values.test_assert5:
+    li a0, 0x0000  # pos_zero = 0x000
+    jal f32_to_bf16 # Call f32_to_bf16(0.0)
+    jal bf16_iszero  # Call bf16_iszero(pos_zero)
+    bne a0, zero, test_special_values.test_assert6 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_znd
+    ecall 
+    li a0, 1
+    ret
+test_special_values.test_assert6:
+    li a0, 0x8000  # neg_zero = 0x800
+    jal f32_to_bf16 # Call f32_to_bf16(-0.0)
+    jal bf16_iszero  # Call bf16_iszero(neg_zero)
+    bne a0, zero, test_special_values.test_assert7 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_nznd
+    ecall 
+    li a0, 1
+    ret
+test_special_values.test_assert7:
+    lw ra, 0(sp)       # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    la a0, str_svp
+    li a7, 4         # syscall for print string
+    ecall
+    li a0, 0          # return 0
+    ret
+
+# ==============================
+# Function: test_arithmetic(void)
+# ==============================
+test_arithmetic:
+    la a0, str_tao
+    li a7, 4         # syscall for print string
+    ecall
+    li a0, 0x3f800000 # f1 = 1.0f
+    jal f32_to_bf16  # Call f32_to_bf16(1.0f)
+    addi sp, sp, -24  # Allocate stack space
+    sw ra, 0(sp)      # Save return address
+    sw s0, 4(sp)      # Save s0
+    sw s1, 8(sp)      # Save s1
+    sw s2, 12(sp)     # Save s2
+    sw s3, 16(sp)     # Save s3
+    sw s4, 20(sp)     # Save s4
+    
+    la s0, test_arith_values  # load address of test_arith_values
+    la s1, test_arith_upper  # load address of test_arith_upper
+    la s2, test_arith_lower  # load address of test_arith_lower
+    lw a0, 0(s0)   # a0 = test_arith_values[0]
+    jal f32_to_bf16  # Call f32_to_bf16(test_arith_values[0])
+    mv s3, a0      # s3 = a = f32_to_bf16(test_arith_values[0])
+    lw a0, 4(s0)   # a0 = test_arith_values[1]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv s4, a0      # s4 = b = f32_to_bf16(test_arith_values[1])
+    mv a0, s3      # a0 = a
+    mv a1, s4      # a1 = b
+    jal bf16_add  # Call bf16_add(a, b)
+    mv t0, a0     # t0 = c = bf16_add(a, b)
+    lw t1, 0(s1)   # t1 = test_arith_upper[0]
+    lw t2, 0(s2)   # t2 = test_arith_lower[0]
+    blt t2, t0, test_arithmetic.skip1  # if test_arith_lower[0] < c goto skip1
+    blt t0, t1, test_arithmetic.skip1  # if c < test_arith_upper[0] goto skip1
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_af
+    ecall 
+    li a0, 1
+    ret
+test_arithmetic.skip1:
+    mv a0, s4      # a0 = b
+    mv a1, s3      # a1 = a
+    jal bf16_sub  # Call bf16_sub(b, a)
+    mv t0, a0     # t0 = c = bf16_sub(b, a)
+    lw t1, 4(s1)   # t1 = test_arith_upper[1]
+    lw t2, 4(s2)   # t2 = test_arith_lower[1]
+    blt t2, t0, test_arithmetic.skip2  # if test_arith_lower[1] < c goto skip2
+    blt t0, t1, test_arithmetic.skip2  # if c < test_arith_upper[1] goto skip2
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_sf
+    ecall 
+    li a0, 1
+    ret
+test_arithmetic.skip2:
+    lw a0, 8(s0)   # a0 = test_arith_values[2]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv s3, a0      # s3 = a = f32_to_bf16(test_arith_values[2])
+    mv a0, s3      # a0 = a
+    mv a1, s4      # a1 = b
+    jal bf16_div  # Call bf16_div(a, b)
+    mv t0, a0     # t0 = c = bf16_div(a, b)
+    lw t1, 8(s1)   # t1 = test_arith_upper[2]
+    lw t2, 8(s2)   # t2 = test_arith_lower[2]
+    blt t2, t0, test_arithmetic.skip3  # if test_arith_lower[2] < c goto skip3
+    blt t0, t1, test_arithmetic.skip3  # if c < test_arith_upper[2] goto skip3
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_df
+    ecall 
+    li a0, 1
+    ret
+test_arithmetic.skip3:
+    lw a0, 16(s0)   # a0 = test_arith_values[4]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv s4, a0      # s4 = b = f32_to_bf16(test_arith_values[4])
+    lw a0, 12(s0)   # a0 = test_arith_values[3]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv s3, a0      # s3 = a = f32_to_bf16(test_arith_values[3])
+    mv a1, s4      # a1 = b
+    jal bf16_div  # Call bf16_div(a, b)
+    mv t0, a0     # t0 = c = bf16_div(a, b)
+    lw t1, 12(s1)   # t1 = test_arith_upper
+    lw t2, 12(s2)   # t2 = test_arith_lower
+    blt t2, t0, test_arithmetic.skip4  # if test_arith_lower < c goto skip4
+    blt t0, t1, test_arithmetic.skip4  # if c < test_arith_upper goto skip4
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_mf
+    ecall 
+    li a0, 1
+    ret
+test_arithmetic.skip4:
+    mv a0, s4      # a0 = b
+    jal bf16_sqrt  # Call bf16_sqrt(b)
+    mv t0, a0     # t0 = c = bf16_sqrt(b)
+    lw t1, 16(s1)   # t1 = test_arith_upper
+    lw t2, 16(s2)   # t2 = test_arith_lower
+    blt t2, t0, test_arithmetic.skip5  # if test_arith_lower < c goto skip5
+    blt t0, t1, test_arithmetic.skip5  # if c < test_arith_upper goto skip5
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_sqrt4
+    ecall 
+    li a0, 1
+    ret
+test_arithmetic.skip5:
+    lw a0, 20(s0)   # a0 = test_arith_values[5]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv s3, a0      # s3 = a = f32_to_bf16(test_arith_values[5])
+    mv a0, s3      # a0 = a
+    jal bf16_sqrt  # Call bf16_sqrt(a)
+    mv t0, a0     # t0 = c = bf16_sqrt(a)
+    lw t1, 20(s1)   # t1 = test_arith_upper
+    lw t2, 20(s2)   # t2 = test_arith_lower
+    blt t2, t0, test_arithmetic.skip6  # if test_arith_lower < c goto skip6
+    blt t0, t1, test_arithmetic.skip6  # if c < test_arith_upper goto skip6
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_sqrt9
+    ecall 
+    li a0, 1
+    ret
+test_arithmetic.skip6:
+    la a0, str_ap
+    li a7, 4         # syscall for print string
+    ecall
+    li a0, 0          # return 0
+    lw s4, 20(sp)     # Restore s4
+    lw s3, 16(sp)     # Restore s3
+    lw s2, 12(sp)     # Restore s2
+    lw s1, 8(sp)      # Restore s1
+    lw s0, 4(sp)      # Restore s0
+    lw ra, 0(sp)      # Restore return address
+    addi sp, sp, 24     # Deallocate stack space
+    ret
+
+# ==============================
+# Function: test_comparisons(void)
+# ==============================
+test_comparisons:
+    la a0, str_tco
+    li a7, 4         # syscall for print string
+    ecall
+    addi sp, sp, -4  # Allocate stack space
+    sw ra, 0(sp)      # Save return address
+    li a0, 0x40000000 # f2 = 2.0f
+    jal f32_to_bf16  # Call f32_to_bf16(2)
+    mv t1, a0       # t1 = b = f32_to_bf16(2.0f)
+    li a0, 0x3f800000 # f1 = 1.0f
+    jal f32_to_bf16  # Call f32_to_bf16(1.0f)
+    mv t2, a0       # t2 = c = f32_to_bf16(1.0f)
+    li a0, 0x3f800000 # f1 = 1.0f
+    jal f32_to_bf16  # Call f32_to_bf16(1.0f)
+    mv t0, a0       # t0 = a = f32_to_bf16(1.0f)
+    mv a1, t2      # a1 = c
+    jal bf16_eq  # Call bf16_eq(a, c)
+    bne a0, zero, test_comparisons.test_assert1 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_etf
+    ecall 
+    li a0, 1
+    ret
+test_comparisons.test_assert1:
+    mv a0, t0      # a0 = a
+    mv a1, t1      # a1 = b
+    jal bf16_eq  # Call bf16_eq(a, b)
+    beq a0, zero, test_comparisons.test_assert2 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_itf
+    ecall 
+    li a0, 1
+    ret
+test_comparisons.test_assert2:
+    mv a0, t0      # a0 = a
+    mv a1, t1      # a1 = b
+    jal bf16_lt  # Call bf16_lt(a, b)
+    bne a0, zero, test_comparisons.test_assert3 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_lttf
+    ecall 
+    li a0, 1
+    ret
+test_comparisons.test_assert3:
+    mv a0, t1      # a0 = b
+    mv a1, t0      # a1 = a
+    jal bf16_lt  # Call bf16_lt(b, a)
+    beq a0, zero, test_comparisons.test_assert4 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_nlttf
+    ecall 
+    li a0, 1
+    ret
+test_comparisons.test_assert4:
+    mv a0, t0      # a0 = a
+    mv a1, t2      # a1 = c
+    jal bf16_lt  # Call bf16_lt(a, c)
+    beq a0, zero, test_comparisons.test_assert5 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_enlttf
+    ecall
+    li a0, 1
+    ret
+test_comparisons.test_assert5:
+    mv a0, t1      # a0 = b
+    mv a1, t0      # a1 = a
+    jal bf16_gt  # Call bf16_gt(b, a)
+    bne a0, zero, test_comparisons.test_assert6 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_gttf
+    ecall
+    li a0, 1
+    ret
+test_comparisons.test_assert6:
+    mv a0, t0      # a0 = a
+    mv a1, t1      # a1 = b
+    jal bf16_gt  # Call bf16_gt(a, b)
+    beq a0, zero, test_comparisons.test_assert7 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_ngttf
+    ecall
+    li a0, 1
+    ret
+test_comparisons.test_assert7:
+    li t3, 0x7fc0  # nan = 0x7fc0
+    mv a0, t3      # a0 = nan
+    mv a1, t3      # a1 = nan
+    jal bf16_eq  # Call bf16_eq(nan, nan)
+    beq a0, zero, test_comparisons.test_assert8 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_netf
+    ecall
+    li a0, 1
+    ret
+test_comparisons.test_assert8:
+    mv a0, t3      # a0 = nan
+    mv a1, t0      # a1 = a
+    jal bf16_lt  # Call bf16_lt(nan, a)
+    beq a0, zero, test_comparisons.test_assert9 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_nanlttf
+    ecall
+    li a0, 1
+    ret
+test_comparisons.test_assert9:
+    mv a0, t3      # a0 = nan
+    mv a1, t0      # a1 = a
+    jal bf16_gt  # Call bf16_gt(nan, a)
+    beq a0, zero, test_comparisons.test_assert10 # TEST ASSERTION
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_nangttf
+    ecall
+    li a0, 1
+    ret
+test_comparisons.test_assert10:
+    lw ra, 0(sp)       # Restore return address
+    addi sp, sp, 4      # Deallocate stack space
+    li a7, 4         # syscall for print string
+    la a0, str_cp
+    ecall
+    li a0, 0          # return 0
+    ret
+
+# ==============================
+# Function: test_edge_cases(void)
+# ==============================
+test_edge_cases:
+    la a0, str_tec
+    li a7, 4         # syscall for print string
+    ecall
+    addi sp, sp, -16 # Allocate stack space
+    sw ra, 0(sp)      # Save return address
+    sw s0, 4(sp)      # Save s0
+    sw s1, 8(sp)      # Save s1
+    sw s2, 12(sp)      # Save s2
+    la s0, test_edge_values
+    lw a0, 0(s0)   # a0 = tiny = test_edge_values[0]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv s1, a0      # s1 = bf_tiny = f32_to_bf16(tiny)
+    jal bf16_to_f32 # Call bf16_to_f32(bf_tiny)
+    mv s2, a0     # t0 = tiny_val = bf16_to_f32(bf_tiny)
+    mv a0, s1      # a0 = bf_tiny
+    jal bf16_iszero  # Call bf16_iszero(bf_tiny)
+    bne a0, zero, test_edge_cases.skip1 # if iszero(bf_tiny) goto skip1
+    lw a0, 4(s0)   # a0  = test_edge_values[1]
+    blt s2, a0, test_edge_cases.skip1  # if tiny_val < small goto skip1
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_tvh
+    ecall 
+    li a0, 1
+    ret 
+test_edge_cases.skip1:
+    lw a0, 12(s0)   # a0 = huge = test_edge_values[3]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv s1, a0      # s1 = bf_huge = f32_to_bf16(huge)
+    lw a0, 16(s0)   # a0 = test_edge_values[4]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv a1, a0      # a1  = f32_to_bf16(test_edge_values[4])
+    mv a0, s1      # a0 = bf_huge
+    jal bf16_mul  # Call bf16_mul(bf_huge, f32_to_bf16(test_edge_values[4]))
+    jal bf16_isinf  # Call bf16_isinf(bf_huge2)
+    bne a0, zero, test_edge_cases.skip2 # if isinf(bf_huge) goto skip2
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_ospi
+    ecall 
+    li a0, 1
+    ret
+test_edge_cases.skip2:
+    lw a0, 8(s0)   # a0 = small = test_edge_values[2]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv s1, a0      # s1 = small = f32_to_bf16(test_edge_values[2])
+    lw a0, 20(s0)   # a0 = test_edge_values[5]
+    jal f32_to_bf16  # Call f32_to_bf16
+    mv a1, a0      # a1  = f32_to_bf16(test_edge_values[5])
+    mv a0, s1      # a0 = small
+    jal bf16_div  # Call bf16_div(small, f32_to_bf16(test_edge_values[5]))
+    mv s1, a0      # s1 = smaller
+    jal bf16_to_f32 # Call bf16_to_f32(smaller)
+    mv s2, a0     # s2 = small_val
+    mv a0, s1      # a0 = smaller
+    jal bf16_iszero  # Call bf16_iszero(smaller)
+    bne a0, zero, test_edge_cases.skip3 # if iszero(smaller) goto skip3
+    lw a0, 0(s0)   # a0  = test_edge_values[0]
+    blt s2, a0, test_edge_cases.skip3  # if small_val < test_edge_values[0] goto skip3
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_uspzod
+    ecall 
+    li a0, 1
+    ret
+test_edge_cases.skip3:
+    la a0, str_ecp
+    li a7, 4         # syscall for print string
+    ecall
+    lw s2, 12(sp)     # Restore s2
+    lw s1, 8(sp)      # Restore s1
+    lw s0, 4(sp)      # Restore s0
+    lw ra, 0(sp)      # Restore return address
+    addi sp, sp, 16     # Deallocate stack space
+    li a0, 0          # return 0
+    ret
+
+# ==============================
+# Function: test_rounding(void)
+# ==============================
+test_rounding:
+    la a0, str_trb
+    li a7, 4         # syscall for print string
+    ecall
+    addi sp, sp, -12  # Allocate stack space
+    sw ra, 0(sp)       # Save return address
+    sw s0, 4(sp)       # Save s0
+    sw s1, 8(sp)       # Save s1
+    la s0, test_round_values  # load address of test_round_values
+    lw s1, 0(s0)   # s1 = exact = test_round_values[0]
+    mv a0, s1      # a0 = exact
+    jal f32_to_bf16  # Call f32_to_bf16(test_round_values[0])
+    jal bf16_to_f32 # Call bf16_to_f32
+    beq a0, s1, test_rounding.skip1  # if back_exact == exact goto next1
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_ersbp
+    ecall 
+    li a0, 1
+    ret
+test_rounding.skip1:
+    lw a0, 4(s0)   # a0 = val = test_round_values[1]
+    jal f32_to_bf16  # Call f32_to_bf16(test_round_values[1])
+    jal bf16_to_f32 # Call bf16_to_f32
+    la s1, test_round_bounds  # load address of test_round_bounds
+    lw t0, 0(s1)   # t0 = lower = test_round_bounds[0]
+    blt t0, a0, test_rounding.skip2  # if lower < back goto skip2
+    lw t0, 4(s1)   # t0 = upper = test_round_bounds[1]
+    blt a0, t0, test_rounding.skip2  #
+    la a0, str_f
+    li a7, 4
+    ecall
+    la a0, str_resbs
+    ecall 
+    li a0, 1
+    ret
+test_rounding.skip2:
+    la a0, str_rp
+    li a7, 4         # syscall for print string
+    ecall
+    lw s1, 8(sp)      # Restore s1
+    lw s0, 4(sp)      # Restore s0
+    lw ra, 0(sp)      # Restore return address
+    addi sp, sp, 12     # Deallocate stack space
+    li a0, 0          # return 0
+    ret
+
+
+
+# ============================================================================
+# data section
+# ============================================================================
+.data
+test_values: .word 0x00000000, 0x3F800000, 0xBF800000, 0x40000000, 0xC0000000, 0x3F000000, 0xBF000000, 0x40490FDB, 0xC0490FDB, 0x501502F9, 0xD01502F9 # 0.0f, 1.0f, -1.0f, 2.0f, -2.0f, 0.5f, -0.5f, 3.14159f, -3.14159f, 1e10f, -1e10f
+test_upper: .word 0x00000000, 0x3F8147AE, 0xBF8147AE, 0x400147AE, 0xC00147AE, 0x3F0147AE, 0xBF0147AE, 0x404B1287, 0xC04B1287, 0x50168071, 0xD0168071 # 0.0f, 1.01f, -1.01f, 2.02f, 2.02f, 0.505f, 0.505f,3.1730059f, -3.1730059f, 1.01e10f, -1.01e10f
+test_lower: .word 0x00000000, 0x3F7D70A4, 0xBF7D70A4, 0x3FFD70A4, 0xCFFD70A4, 0x3EFD70A4, 0xBEFD70A4, 0x40470D18, 0xC0470D18, 0x50138581, 0xD0138581 # 0.0f, 0.99f, -0.99f, 1.98f, -1.98f, 0.495f, -0.495f, 3.1101747f, -3.1101747f, 9.9e9f, -9.9e9f
+
+test_arith_values: .word 0x3f800000, 0x40000000, 0x41200000, 0x40400000, 0x40800000, 0x41100000  # 1.0, 2.0, 10.0, 3.0, 4.0, 9.0
+test_arith_upper: .word 0x4040a3d7, 0x3f8147ae, 0x40a33333, 0x4141999a, 0x4000a3d7, 0x4040a3d7 # 3.01f, 1.01f, 5.1f, 12.1f, 2.01f, 3.01f
+test_arith_lower: .word 0x403f5c29, 0x3f7d70a4, 0x409ccccd, 0x413e6666, 0x3ffeb852, 0x403f5c29 # 2.99f, 0.99f, 4.9f, 11.9f, 0.99f, 2.99f
+
+test_edge_values: .word 0x00000001, 0x02081cea, 0x006ce3ee, 0x7e967699, 0x41200000, 0x501502f9  # 1e-45f, 1e-37f, 1e-38f, 1e38f, 10.0f, 1e10f
+
+test_round_values: .word 0x3fc00000, 0x3f800347 # 1.5f, 1.0001f
+test_round_bounds: .word 0x3f7fc505, 0x3f80240b # 0.9991f, 1.0011f
+
+str_f: .string "FAIL: "
+str_tbc: .string "Testing basic conversions...\n"
+str_sm: .string "Sign mismatch"
+str_retl: .string "Relative error too large"
+str_bcp: .string "  Basic conversions: PASS\n"
+str_tsv: .string "Testing special values...\n"
+str_pind: .string "Positive infinity not detected"
+str_idan: .string "Infinity detected as NaN"
+str_nind: .string "Negative infinity not detected"
+str_nnd: .string "NaN not detected"
+str_ndai: .string "NaN detected as infinity"
+str_znd: .string "Zero not detected"
+str_nznd: .string "Negative zero not detected"
+str_svp: .string "  Special values: PASS\n"
+str_tao: .string "Testing arithmetic operations...\n"
+str_af: .string "Addition failed"
+str_sf: .string "Subtraction failed"
+str_mf: .string "Multiplication failed"
+str_df: .string "Division failed"
+str_sqrt4: .string "sqrt(4) failed"
+str_sqrt9: .string "sqrt(9) failed"
+str_ap: .string "  Arithmetic: PASS\n"
+str_tco: .string "Testing comparisons operations...\n"
+str_etf: .string "Equality test failed"
+str_itf: .string "Inequality test failed"
+str_lttf: .string "Less than test failed"
+str_nlttf: .string "Not less than test failed"
+str_enlttf: .string "Equal not less than test failed"
+str_gttf: .string "Greater than test failed"
+str_ngttf: .string "Not greater than test failed"
+str_netf: .string "NaN equality test failed"
+str_nanlttf: .string "NaN less than test failed"
+str_nangttf: .string "NaN greater than test failed"
+str_cp: .string "  Comparisons: PASS\n"
+str_tec: .string "Testing edge cases...\n"
+str_tvh: .string "Tiny value handling"
+str_ospi: .string "Overflow should produce infinity"
+str_uspzod: .string "Underflow should produce zero or denormal"
+str_ecp: .string "  Edge cases: PASS\n"
+str_trb: .string "Testing rounding behavior...\n"
+str_ersbp: .string "Exact representation should be preserved"
+str_resbs: .string "Rounding error should be small"
+str_rp: .string "  Rounding: PASS\n"
+str_bts: .string "\n=== bfloat16 Test Suite ===\n\n"
+str_tf: .string "\n=== TESTS FAILED ===\n"
+str_atp: .string "\n=== ALL TESTS PASSED ===\n"
+
