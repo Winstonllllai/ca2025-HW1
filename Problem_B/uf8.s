@@ -16,7 +16,7 @@ main:
     # Output: a0 = exit code
     addi sp, sp, -4  # Allocate stack space
     sw ra, 0(sp)     # Save return address
-    jal ra, test     # a0 = test()
+    jal test     # a0 = test()
     lw ra, 0(sp)     # Restore return address
     addi sp, sp, 4   # Deallocate stack space
     beq a0, zero, main.end  # if (a0 == 0) goto main.end
@@ -74,7 +74,7 @@ uf8_encode:
     addi sp, sp, -8  # Allocate stack space
     sw ra, 4(sp)     # Save return address
     sw a0, 0(sp)     # Save input value
-    jal ra, clz      # Call clz function
+    jal clz      # Call clz function
     mv t1, a0        # lz = t1 = clz(value)
     lw a0, 0(sp)     # Restore input value
     lw ra, 4(sp)     # Restore return address
@@ -143,9 +143,9 @@ test.loop:
     sw t2, 12(sp)  # Save i
     sw t3, 16(sp)  # Save max
     sw t4, 20(sp)  # Save fl
-    jal ra, uf8_decode  # a0 = uf8_decode(fl)
+    jal uf8_decode  # a0 = uf8_decode(fl)
     mv t5, a0  # value = t5 = uf8_decode(fl)
-    jal ra, uf8_encode  # a0 = uf8_encode(value)
+    jal uf8_encode  # a0 = uf8_encode(value)
     mv t6, a0  # fl2 = t6 = uf8_encode(value)
     lw t4, 20(sp)  # Restore fl
     lw t3, 16(sp)  # Restore max
