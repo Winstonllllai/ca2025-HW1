@@ -35,30 +35,30 @@ clz:
     # Output: a0 = number of leading zeros in x's binary representation
     li t0, 32           # n = t0 = 32
     srli t2, a0, 16      # y = t2 = x >> 16
-    beq t2, zero, .L_c8 # if (y == 0) goto .L_c8
+    beq t2, zero, clz.L_c8 # if (y == 0) goto clz.L_c8
     addi t0, t0, -16      # n -= 16
     mv a0, t2           # x = y
-.L_c8:
+clz.L_c8:
     srli t2, a0, 8       # y = t2 = x >> 8
-    beq t2, zero, .L_c4 # if (y == 0) goto .L_c4
+    beq t2, zero, clz.L_c4 # if (y == 0) goto clz.L_c4
     addi t0, t0, -8       # n -= 8
     mv a0, t2           # x = y
-.L_c4:
+clz.L_c4:
     srli t2, a0, 4       # y = t2 = x >> 4
-    beq t2, zero, .L_c2 # if (y == 0) goto .L_c2
+    beq t2, zero, clz.L_c2 # if (y == 0) goto clz.L_c2
     addi t0, t0, -4       # n -= 4
     mv a0, t2           # x = y
-.L_c2:
+clz.L_c2:
     srli t2, a0, 2       # y = t2 = x >> 2
-    beq t2, zero, .L_c1 # if (y == 0) goto .L_c1
+    beq t2, zero, clz.L_c1 # if (y == 0) goto .L_c1
     addi t0, t0, -2       # n -= 2
     mv a0, t2           # x = y
-.L_c1:
+clz.L_c1:
     srli t2, a0, 1       # y = t2 = x >> 1
-    beq t2, zero, .L_final # if (y == 0) goto .L_final
+    beq t2, zero, clz.L_final # if (y == 0) goto clz.L_final
     addi t0, t0, -1       # n -= 1
     mv a0, t2           # x = y
-.L_final:
+clz.L_final:
     sub a0, t0, a0      # return n - x
     ret
     
@@ -203,6 +203,7 @@ test.skip1:
     li a7, 4  # syscall: print string
     ecall
     li s1, 0  # passed = 0
+    mv a0, s1  # return passed
 test.skip2:
     mv s0, t5  # previous_value = value
     addi s2, s2, 1  # i++
@@ -214,5 +215,4 @@ test.end:
     lw s0, 4(sp)   # Restore previous_value
     lw ra, 0(sp)   # Restore return address
     addi sp, sp, 20  # Deallocate stack space
-    mv a0, s1  # return passed
     ret  # End of test function
